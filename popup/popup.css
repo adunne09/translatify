@@ -70,6 +70,39 @@ button:hover, input:hover {
     transition: all 0.25s;
 }
 
+#anthropicApiKey {
+    background-color: #333333;
+    border-radius: 4px;
+    color: white;
+    font-weight: normal;
+    padding: 0 10px;
+    height: 32px;
+    width: 100%;
+}
+
+#anthropicApiKey:hover, #anthropicApiKey:focus {
+    background-color: #333333;
+    cursor: text;
+    outline: 1px solid #1db954;
+}
+
+.status-text {
+    display: block;
+    margin-top: 8px;
+    font-size: 0.85em;
+    color: #1db954;
+}
+
+.status-text.error {
+    color: #ff6b6b;
+}
+
+.hint {
+    margin-top: 4px;
+    font-size: 0.75em;
+    color: #cccccc;
+}
+
 select, #languageSelector {
     border: none;
     height: 32px;

@@ -26,8 +26,15 @@
           }
     ],
 
+    "background": {
+      "service_worker": "background.js"
+    },
+
     "permissions": [
       "storage"
+    ],
+    "host_permissions": [
+      "https://api.anthropic.com/*"
     ],
 
     "browser_specific_settings": {

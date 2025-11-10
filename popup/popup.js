@@ -4,6 +4,17 @@ const newLyricsSize = document.getElementById('newLyricsSize');
 const lyricsMode = document.getElementById('lyricsMode');
 const translateToggle = document.getElementById('translateToggle');
 const lyricsSizeValue = document.getElementById('lyricsSizeValue');
+const anthropicApiKeyInput = document.getElementById('anthropicApiKey');
+const saveAnthropicApiKeyButton = document.getElementById('saveAnthropicApiKey');
+const anthropicApiKeyStatus = document.getElementById('anthropicApiKeyStatus');
+
+function setAnthropicStatus(message, isError = false) {
+    if (!anthropicApiKeyStatus) {
+        return;
+    }
+    anthropicApiKeyStatus.textContent = message;
+    anthropicApiKeyStatus.classList.toggle('error', Boolean(isError));
+}
 
 $(document).ready(function() {
     $('#languageSelector').select2();
@@ -55,6 +66,50 @@ chrome.storage.local.get(['translateButton'], (result) => {
         translateToggle.checked = true;
     }
 });
+
+if (anthropicApiKeyInput && saveAnthropicApiKeyButton) {
+    chrome.storage.local.get(['anthropicApiKey'], (result) => {
+        if (result.anthropicApiKey) {
+            anthropicApiKeyInput.value = '';
+            anthropicApiKeyInput.placeholder = 'API key saved - enter a new one to replace';
+            setAnthropicStatus('Anthropic API key saved.');
+        } else {
+            anthropicApiKeyInput.placeholder = 'sk-ant-...';
+            setAnthropicStatus('No Anthropic API key saved yet.');
+        }
+    });
+
+    saveAnthropicApiKeyButton.addEventListener('click', async () => {
+        const trimmedKey = (anthropicApiKeyInput.value || '').trim();
+
+        try {
+            if (trimmedKey.length === 0) {
+                await chrome.storage.local.remove('anthropicApiKey');
+                setAnthropicStatus('Anthropic API key removed. Translations require a valid key.', true);
+                anthropicApiKeyInput.value = '';
+                anthropicApiKeyInput.placeholder = 'sk-ant-...';
+                chrome.tabs.query({}, tabs => {
+                    tabs.forEach(tab => {
+                        chrome.tabs.sendMessage(tab.id, {anthropicApiKeyUpdated: true});
+                    });
+                });
+            } else {
+                await chrome.storage.local.set({anthropicApiKey: trimmedKey});
+                setAnthropicStatus('Anthropic API key saved.');
+                anthropicApiKeyInput.value = '';
+                anthropicApiKeyInput.placeholder = 'API key saved - enter a new one to replace';
+                chrome.tabs.query({}, tabs => {
+                    tabs.forEach(tab => {
+                        chrome.tabs.sendMessage(tab.id, {anthropicApiKeyUpdated: true});
+                    });
+                });
+            }
+        } catch (error) {
+            console.error('Translatify: Failed to store Anthropic API key', error);
+            setAnthropicStatus('Failed to save API key. See console for details.', true);
+        }
+    });
+}
 
 // Handle translate toggle changes
 translateToggle.addEventListener('change', async () => {
@@ -133,5 +188,3 @@ lyricsMode.addEventListener('change', async () => {
     });
 
 });
-
-

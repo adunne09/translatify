@@ -38,6 +38,14 @@
     </div>
 
     <div class="optionDiv">
+      <h4>Anthropic API Key</h4>
+      <input type="password" id="anthropicApiKey" placeholder="sk-ant-..." autocomplete="off" spellcheck="false">
+      <button id="saveAnthropicApiKey">Save API Key</button>
+      <span id="anthropicApiKeyStatus" class="status-text"></span>
+      <p class="hint">Stored locally in browser storage for Claude translations.</p>
+    </div>
+
+    <div class="optionDiv">
       <h4 data-locale="targetLanguage">Target language translation</h4>
       <select name="languageSelector" id="languageSelector" value="en">
         <option value="af">Afrikaans (Afrikaans)</option>

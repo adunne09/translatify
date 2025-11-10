@@ -1,18 +1,52 @@
-async function translateText(text,sourceLanguage,destinationLanguage) {
+// API calls are now handled by the background service worker to avoid CORS issues
+async function getAnthropicApiKey() {
+    // Allow setting a global key for quick testing, otherwise fall back to storage.
+    const globalKey = typeof globalThis !== "undefined" ? globalThis.ANTHROPIC_API_KEY : null;
+    if (typeof globalKey === "string" && globalKey.trim().length > 0) {
+        return globalKey.trim();
+    }
 
-    const params = `&sl=${sourceLanguage}&tl=${destinationLanguage}&q=${text}`;
-    const url = `https://translate.googleapis.com/translate_a/single?client=gtx&dt=t${params}`;
+    if (!chrome?.storage?.local?.get) {
+        return null;
+    }
+
     try {
-        const response = await fetch(url);
-        const data = await response.json();
-        const translatedArrays = data[0];
-        let translatedLyrics = "";
-        translatedArrays.forEach((translatedArray) => {
-            translatedLyrics += translatedArray[0];
-        });
-        return translatedLyrics;
+        const result = await chrome.storage.local.get(["anthropicApiKey"]);
+        const storedKey = result?.anthropicApiKey;
+        if (typeof storedKey === "string" && storedKey.trim().length > 0) {
+            return storedKey.trim();
+        }
     } catch (error) {
-        console.error('Error:', error);
+        console.error("Translatify: Failed to read Anthropic API key from storage.", error);
+    }
+
+    return null;
+}
+
+async function translateText(text,sourceLanguage,destinationLanguage,apiKey) {
+    if (!apiKey) {
+        console.error("Translatify: Anthropic API key is missing. Store it in chrome.storage.local under 'anthropicApiKey' or set globalThis.ANTHROPIC_API_KEY.");
+        return null;
+    }
+
+    try {
+        // Send message to background script instead of making direct API call
+        const response = await chrome.runtime.sendMessage({
+            action: "translateText",
+            text: text,
+            sourceLanguage: sourceLanguage,
+            destinationLanguage: destinationLanguage,
+            apiKey: apiKey
+        });
+
+        if (response.success) {
+            return response.translatedText;
+        } else {
+            console.error("Translatify: Translation failed:", response.error);
+            return null;
+        }
+    } catch (error) {
+        console.error("Translatify: Translation error:", error);
         return null;
     }
 }
@@ -91,12 +125,16 @@ function replaceLyrics(translatedLyricsList) {
 }
 
 
-async function translateAllWithGoogle(sourceLanguage,destinationLanguage) {
+async function translateAllWithAnthropic(sourceLanguage,destinationLanguage) {
+    const apiKey = await getAnthropicApiKey();
+    if (!apiKey) {
+        console.error("Translatify: Unable to translate lyrics without an Anthropic API key.");
+        return;
+    }
     const lyricsList = getLyrics();
     const fullLyrics = getFullLyrics(lyricsList);
-    const translatedLyrics = await translateText(fullLyrics,sourceLanguage,destinationLanguage);
+    const translatedLyrics = await translateText(fullLyrics,sourceLanguage,destinationLanguage,apiKey);
     const translatedLyricsList = getTranslatedLyricsToList(translatedLyrics);
-    console.log(translatedLyricsList);
     replaceLyrics(translatedLyricsList);
 }
 
@@ -134,21 +172,25 @@ async function replaceLyricAsync(translatedLine, index) {
     }
 
     let focusedLyrics = document.querySelector(".EhKgYshvOwpSrTv399Mw");
-    focusedLyrics.scrollIntoView({
-        behavior: "smooth",
-        block: "center",
-        inline: "center"
-    });
-    console.log(focusedLyrics)
-
+    if (focusedLyrics) {
+        focusedLyrics.scrollIntoView({
+            behavior: "smooth",
+            block: "center",
+            inline: "center"
+        });
+        console.log(focusedLyrics);
+    }
 }
 
 
-async function translateLineByLineWithGoogle(sourceLanguage,destinationLanguage) {
-    const translationMap = new Map();
+async function translateLineByLineWithAnthropic(sourceLanguage,destinationLanguage) {
+    const apiKey = await getAnthropicApiKey();
+    if (!apiKey) {
+        console.error("Translatify: Unable to translate lyrics without an Anthropic API key.");
+        return;
+    }
 
     // Tag to let know that the lyrics are translated
-
     const lyricsWrapperList = document.querySelectorAll("div[data-testid='fullscreen-lyric']");
 
     if (lyricsWrapperList[0] == null) {
@@ -160,30 +202,81 @@ async function translateLineByLineWithGoogle(sourceLanguage,destinationLanguage)
     tag.id="translated";
     lyricsWrapperList[0].appendChild(tag);
 
-    // No need to translate these characters
-    translationMap.set('♪', '♪');
-    translationMap.set(' ', ' ');
-    translationMap.set('', '');
-
     const lyricsList = getLyrics();
-    let translatedLyricsList = new Array();
     if (lyricsList) {
-        const promises = lyricsList.map(async (lyrics, index) => {
-            let translatedLine = await translateText(lyrics, sourceLanguage, destinationLanguage);
-            await replaceLyricAsync(translatedLine, index);
+        // Track indices of non-empty lines for proper mapping
+        const nonEmptyIndices = [];
+        const nonEmptyLyrics = [];
+
+        // Collect non-empty lines and their indices
+        lyricsList.forEach((line, index) => {
+            const trimmedLine = line.trim();
+            if (trimmedLine && trimmedLine !== "") {
+                nonEmptyIndices.push(index);
+                nonEmptyLyrics.push(line);
+            }
         });
-        await Promise.all(promises);
+
+        // Join non-empty lyrics for API call
+        const fullLyrics = nonEmptyLyrics.join("\n");
+
+        // Debug: Log what we're sending to the API
+        console.log("Translatify: Sending lyrics to API:", {
+            sourceLanguage: sourceLanguage,
+            destinationLanguage: destinationLanguage,
+            originalLineCount: lyricsList.length,
+            nonEmptyLineCount: nonEmptyLyrics.length,
+            skippedEmptyLines: lyricsList.length - nonEmptyLyrics.length,
+            fullLyrics: fullLyrics
+        });
+
+        // Make single API call with all lyrics
+        const translatedText = await translateText(fullLyrics, sourceLanguage, destinationLanguage, apiKey);
+
+        if (translatedText) {
+            // Split the translated text back into lines
+            const translatedLines = translatedText.split("\n");
+
+            // Debug: Log the translation response
+            console.log("Translatify: Received translation:", {
+                originalLineCount: lyricsList.length,
+                translatedLineCount: translatedLines.length,
+                translatedLines: translatedLines
+            });
+
+            // Create a mapping for all lines (including empty ones)
+            const finalTranslations = [];
+            let translationIndex = 0;
+
+            for (let i = 0; i < lyricsList.length; i++) {
+                if (nonEmptyIndices.includes(i)) {
+                    // This was a non-empty line that was translated
+                    finalTranslations[i] = translatedLines[translationIndex] || lyricsList[i];
+                    translationIndex++;
+                } else {
+                    // This was an empty line, keep it as is
+                    finalTranslations[i] = lyricsList[i];
+                }
+            }
+
+            // Replace each line in the UI
+            for (let index = 0; index < lyricsList.length; index++) {
+                await replaceLyricAsync(finalTranslations[index], index);
+            }
+        } else {
+            console.error("Translatify: Translation failed, keeping original lyrics");
+        }
 
         // Focus active lyrics
         let focusedLyrics = document.querySelector(".EhKgYshvOwpSrTv399Mw");
-        focusedLyrics.scrollIntoView({
-            behavior: "smooth",
-            block: "center",
-            inline: "center"
-        });
+        if (focusedLyrics) {
+            focusedLyrics.scrollIntoView({
+                behavior: "smooth",
+                block: "center",
+                inline: "center"
+            });
+        }
     }
-
-    
 }
 
 
@@ -201,17 +294,19 @@ async function translate() {
 
 
     if (translateButton.getAttribute("aria-pressed") == "true" && document.getElementById("translated") == null && lyricsButton.getAttribute("aria-pressed") == "true") {
-        translateLineByLineWithGoogle(sourceLanguage,destinationLanguage);
+        translateLineByLineWithAnthropic(sourceLanguage,destinationLanguage);
     } else if (translateButton.getAttribute("aria-pressed") == "false" && document.getElementById("translated") != null) {
         restoreLyrics();
-        
+
         // Focus active lyrics
         let focusedLyrics = document.querySelector(".EhKgYshvOwpSrTv399Mw");
-        focusedLyrics.scrollIntoView({
-            behavior: "smooth",
-            block: "center",
-            inline: "center"
-        });
+        if (focusedLyrics) {
+            focusedLyrics.scrollIntoView({
+                behavior: "smooth",
+                block: "center",
+                inline: "center"
+            });
+        }
     }
     
 }
